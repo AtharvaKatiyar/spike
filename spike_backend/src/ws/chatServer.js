@@ -3,6 +3,19 @@ import {URL} from 'url';
 import {verifyJwt} from '../utils/verifyJWT.js';
 import {prisma} from '../lib/prisma.js'
 const activeRooms = new Map();
+const roomMessageCache = new Map();
+const MAX_CACHE = 50;
+
+function chatSystem(roomName, payload) {
+    const sockets = activeRooms.get(roomName);
+    if(!sockets) return;   
+    const message = JSON.stringify(payload);
+    for(const socket of sockets){
+        if(socket.readyState === socket.OPEN){
+            socket.send(message);
+        }
+    }
+}
 
 export function startChatServer(httpServer) {
     const wss = new WebSocketServer({server: httpServer});
@@ -21,7 +34,15 @@ export function startChatServer(httpServer) {
             }
             const decoded = verifyJwt(token);
             ws.userId = decoded.userId;
-
+            const user = await prisma.user.findUnique({
+                where: {id: ws.userId},
+                select : {name: true}
+            })
+            if(!user){
+                ws.close(1008, 'User not found');
+                return;
+            }  
+            ws.userName = user.name;
             const room = await prisma.room.findUnique({
                 where: {
                     name: roomName
@@ -33,33 +54,40 @@ export function startChatServer(httpServer) {
             }
             ws.roomId = room.id;
             ws.roomName = room.name;
-            console.log(`User ${ws.userId} connected to room ${roomName}`);
+            console.log(`User ${ws.userName} connected to room ${roomName}`);
             if(!activeRooms.has(roomName)){
                 activeRooms.set(roomName, new Set());
             }
             activeRooms.get(roomName).add(ws);
 
-            const previousMessages = await prisma.message.findMany({
-                where: {
-                    roomId: ws.roomId
-                },
-                orderBy: {createdAt: 'asc'},
-                take: 50,
-                include: {
-                    user:{select: {name: true}}
-                }
-            });
+            chatSystem(ws.roomName, {type: 'notification',event: 'join', user: ws.userName, timestamp: new Date()});
 
+            let history = roomMessageCache.get(roomName)
+            if(!history) {
+                const messages = await prisma.message.findMany({
+                    where: {
+                        roomId: ws.roomId
+                    },
+                    orderBy: {createdAt: 'asc'},
+                    take: MAX_CACHE,
+                    include: {
+                        user:{select: {name: true}}
+                    }
+                });
+                history = messages.map((m)=>({
+                    from: m.user.name,
+                    content: m.content,
+                    timestamp: m.createdAt
+                }))
+                roomMessageCache.set(roomName, history);
+            }
             ws.send(
                 JSON.stringify({
                     type: 'history',
-                    messages: previousMessages.map((m)=>({
-                        from: m.user.name,
-                        content: m.content,
-                        timestamp: m.createdAt
-                    }))
+                    messages: history
                 })
             )
+
 
         } catch(err){
                 console.log('Error accepting websocket connection: ', err); 
@@ -92,32 +120,40 @@ export function startChatServer(httpServer) {
                         }
                     }
                 })
-                const outgoing = JSON.stringify({
+                const outgoing = {
                     type: "message",
                     from: saved.user.name,
                     content: saved.content,
                     timestamp: saved.createdAt
-                })
+                }
+                const cache = roomMessageCache.get(ws.roomName) || [];
+                cache.push(outgoing);
+                if(cache.length > MAX_CACHE) cache.shift();
+                roomMessageCache.set(ws.roomName, cache);
+                const encoded = JSON.stringify(outgoing);
 
                 const roomSockets = activeRooms.get(ws.roomName);
                 if(!roomSockets)    return;
                 for(const client of roomSockets){
                     if(client.readyState === client.OPEN){
-                        client.send(outgoing)
+                        client.send(encoded);
                     }
-                }
+                } 
             } catch(err) {
                 console.error("Error handling message: ",err);
             }
         })
 
         ws.on('close', ()=>{
+            chatSystem(ws.roomName, {type: 'notification', event: 'leave', user: ws.userName, timestamp: new Date()});
+
             console.log(`Socket closed: ${ws.userId}`);
             const roomSockets = activeRooms.get(ws.roomName);
             if(roomSockets) {
                 roomSockets.delete(ws);
                 if(roomSockets.size === 0){
                     activeRooms.delete(ws.roomName);
+                    roomMessageCache.delete(ws.roomName);
                 }
             }
         })

@@ -1,8 +1,8 @@
 import express from 'express'
-import { authRouter } from './routes/authRouter';
-import {roomRouter} from './routes/roomRouter';
+import { authRouter } from './routes/authRouter.js';
+import {roomRouter} from './routes/roomRouter.js';
 import 'dotenv/config';
-import { verifyToken } from './controllers/authController';
+import { verifyToken } from './controllers/authController.js';
 
 const app = express();
 app.use(express.json());

@@ -1,8 +1,8 @@
 import bcrypt from 'bcrypt'
-import { prisma } from '../lib/prisma'
+import { prisma } from '../lib/prisma.js'
 import jwt from 'jsonwebtoken'
 import 'dotenv/config'
-import { verifyJwt } from '../utils/verifyJWT';
+import { verifyJwt } from '../utils/verifyJWT.js';
 const saltRounds = Number(process.env.SALT_ROUND);
 
 const regiController = async(req, res, next) => {

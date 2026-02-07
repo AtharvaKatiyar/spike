@@ -1,5 +1,5 @@
-import { prisma } from "../lib/prisma";
-import {Prisma} from '@prisma/client'
+import { prisma } from "../lib/prisma.js";
+// import {Prisma} from '@prisma/client'
 
 const listRooms = async (req, res, next) => {
     try{
@@ -33,7 +33,7 @@ const postRooms = async (req, res, next) => {
         return res.status(200).json({message: "Room created successfully", id:room.id, name:room.name})
 
     } catch(error) {
-        if(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+        if( error.code === 'P2002')
             return res.status(409).json({message: "Room name must be unique"})
 
         console.error("Error while creating Room: ", error);
